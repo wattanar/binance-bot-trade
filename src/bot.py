@@ -4,6 +4,7 @@ import signal
 from decimal import Decimal
 from typing import Optional
 
+import ccxt.async_support as ccxt_async
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -18,6 +19,16 @@ from src.risk_manager import validate_order, check_grid_limit, calculate_positio
 
 
 load_dotenv()
+
+
+def _safe_error(e: Exception) -> str:
+    if isinstance(e, (ccxt_async.AuthenticationError, ccxt_async.PermissionDenied)):
+        return f"{type(e).__name__}: authentication failed"
+    if isinstance(e, ccxt_async.RateLimitExceeded):
+        return f"{type(e).__name__}: rate limit exceeded"
+    if isinstance(e, ccxt_async.BaseError):
+        return f"{type(e).__name__}: exchange error"
+    return f"{type(e).__name__}: {e}"
 
 
 class GridTradingBot:
@@ -38,8 +49,7 @@ class GridTradingBot:
         if not api_key or not secret:
             raise ExchangeError(
                 f"Missing API keys for {self.mode} mode. "
-                f"Set BINANCE_{'TESTNET_' if testnet else ''}API_KEY and "
-                f"BINANCE_{'TESTNET_' if testnet else ''}SECRET_KEY in .env"
+                "See .env.example for required variables."
             )
 
         self.exchange = Exchange(api_key, secret, testnet=testnet)
@@ -91,7 +101,7 @@ class GridTradingBot:
                 )
                 await asyncio.sleep(0.2)
             except Exception as e:
-                logger.error("Failed to place order: {}", e)
+                logger.error("Failed to place order: {}", _safe_error(e))
 
         self.running = True
         await self._main_loop()
@@ -119,7 +129,7 @@ class GridTradingBot:
                 await asyncio.sleep(poll_interval)
 
             except Exception as e:
-                logger.error("Error in main loop: {}", e)
+                logger.error("Error in main loop: {}", _safe_error(e))
                 logger.info("Reconnecting in {}s...", backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
@@ -168,7 +178,7 @@ class GridTradingBot:
                                     await self.exchange.place_limit_order(order.symbol, order.side, float(order.amount), float(order.price))
                                     await asyncio.sleep(0.2)
                                 except Exception as e:
-                                    logger.error("Rebalance order failed: {}", e)
+                                    logger.error("Rebalance order failed: {}", _safe_error(e))
 
                         if not has_buy_below and adjacent_buy >= self.levels[0]:
                             order = OrderIntent(symbol=self.config.symbol, side="buy", price=level, amount=self.config.grid.order_size)
@@ -179,7 +189,7 @@ class GridTradingBot:
                                     await self.exchange.place_limit_order(order.symbol, order.side, float(order.amount), float(order.price))
                                     await asyncio.sleep(0.2)
                                 except Exception as e:
-                                    logger.error("Rebalance order failed: {}", e)
+                                    logger.error("Rebalance order failed: {}", _safe_error(e))
 
     async def shutdown(self) -> None:
         logger.info("Shutting down...")
@@ -191,7 +201,7 @@ class GridTradingBot:
                 await self.exchange.cancel_all_orders(self.config.symbol)
                 logger.info("All orders cancelled")
             except Exception as e:
-                logger.error("Error cancelling orders: {}", e)
+                logger.error("Error cancelling orders: {}", _safe_error(e))
             finally:
                 await self.exchange.close()
 
@@ -214,5 +224,5 @@ async def run_bot(config: BotConfig, mode: str = "paper") -> None:
     try:
         await bot.start()
     except Exception as e:
-        logger.error("Bot error: {}", e)
+        logger.error("Bot error: {}", _safe_error(e))
         await bot.shutdown()

@@ -1,8 +1,11 @@
 import argparse
 import asyncio
 import json
+import os
 from datetime import datetime
+from pathlib import Path
 
+from dotenv import load_dotenv
 from loguru import logger
 
 from src.config import ConfigError, load_config
@@ -10,6 +13,8 @@ from src.data_fetcher import fetch_ohlcv
 from src.exchange import Exchange
 from src.backtester import run_backtest
 from src.bot import run_bot
+
+load_dotenv()
 
 
 def cmd_validate(args) -> int:
@@ -33,15 +38,15 @@ async def _run_backtest(args) -> int:
     try:
         config = load_config(args.config)
     except ConfigError as e:
-        logger.error("Config error: {}", e)
+        logger.error("Config validation failed: {}", type(e).__name__)
         return 1
 
-    api_key = args.api_key or ""
-    secret = args.secret or ""
+    api_key = os.environ.get("BINANCE_API_KEY", "")
+    secret = os.environ.get("BINANCE_SECRET_KEY", "")
 
     if not api_key or not secret:
-        logger.warning("No API keys provided. Backtest needs exchange for historical data.")
-        logger.warning("Set --api-key and --secret flags or use BINANCE_API_KEY env.")
+        logger.warning("No API keys provided. Historical data fetch requires API access.")
+        logger.warning("Set BINANCE_API_KEY / BINANCE_SECRET_KEY in .env file.")
         return 1
 
     exchange = Exchange(api_key, secret, testnet=False)
@@ -67,6 +72,11 @@ async def _run_backtest(args) -> int:
     print(result.summary_table())
 
     if args.output:
+        output_path = Path(args.output).resolve()
+        if not str(output_path).startswith(str(Path.cwd())):
+            logger.error("Output path must be within the current working directory")
+            await exchange.close()
+            return 1
         output = {
             "total_pnl": float(result.total_pnl),
             "total_return_pct": float(result.total_return_pct),
@@ -77,7 +87,7 @@ async def _run_backtest(args) -> int:
             "losing_count": result.losing_count,
             "profit_factor": float(result.profit_factor),
         }
-        with open(args.output, "w") as f:
+        with open(output_path, "w") as f:
             json.dump(output, f, indent=2)
         logger.info("Results saved to {}", args.output)
 
@@ -147,8 +157,6 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_p.add_argument("--end", help="End date (YYYY-MM-DD)")
     backtest_p.add_argument("--timeframe", help="Candle timeframe (default: 1m)")
     backtest_p.add_argument("--output", "-o", help="Output JSON file for results")
-    backtest_p.add_argument("--api-key", help="Binance API key (or use env var)")
-    backtest_p.add_argument("--secret", help="Binance secret key (or use env var)")
     backtest_p.set_defaults(func=cmd_backtest)
 
     return parser

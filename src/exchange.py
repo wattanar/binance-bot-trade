@@ -16,6 +16,18 @@ class Exchange:
         self._testnet = testnet
         self._exchange: Optional[ccxt_async.Exchange] = None
 
+    def __repr__(self) -> str:
+        return f"Exchange(testnet={self._testnet}, connected={self._exchange is not None})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __getstate__(self) -> dict:
+        raise TypeError("Exchange objects cannot be pickled — contains credentials")
+
+    def __setstate__(self, state: dict) -> None:
+        raise TypeError("Exchange objects cannot be unpickled — contains credentials")
+
     async def connect(self) -> None:
         config: dict = {
             "apiKey": self._api_key,
